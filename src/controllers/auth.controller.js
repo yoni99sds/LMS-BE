@@ -3,37 +3,36 @@ import catchAsync from "../utils/catchAsync.js";
 import jwt from "jsonwebtoken";
 import AppError from "../utils/AppError.js";
 
-// ============================================================
-// COOKIE CONFIGURATION
-// ============================================================
-//
-// Render is currently reporting NODE_ENV=development even
-// though the backend is deployed over HTTPS.
-//
-// Therefore we determine production cookie behavior from
-// FRONTEND_URL instead of NODE_ENV.
-//
-// Production:
-//   Frontend = https://lms-jet-zeta.vercel.app
-//   secure = true
-//   sameSite = none
-//
-// Local:
-//   Frontend = http://localhost:3000
-//   secure = false
-//   sameSite = lax
-//
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| Environment
+|--------------------------------------------------------------------------
+*/
 
 const isProductionEnvironment =
   process.env.FRONTEND_URL?.startsWith("https://");
+
+/*
+|--------------------------------------------------------------------------
+| Cookie Options
+|--------------------------------------------------------------------------
+|
+| Production:
+| - secure: true
+| - sameSite: "lax"
+|
+| Development:
+| - secure: false
+| - sameSite: "lax"
+|
+*/
 
 const getCookieOptions = () => {
   if (isProductionEnvironment) {
     return {
       httpOnly: true,
       secure: true,
-      sameSite: "none",
+      sameSite: "lax",
       path: "/",
     };
   }
@@ -46,9 +45,11 @@ const getCookieOptions = () => {
   };
 };
 
-// ============================================================
-// SET AUTH COOKIES
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| Set Authentication Cookies
+|--------------------------------------------------------------------------
+*/
 
 const setCookies = (
   res,
@@ -95,10 +96,9 @@ const setCookies = (
     "=================================================="
   );
 
-  // ----------------------------------------------------------
-  // ACCESS TOKEN
-  // ----------------------------------------------------------
-
+  /*
+   * Access Token
+   */
   res.cookie(
     "accessToken",
     accessToken,
@@ -110,10 +110,9 @@ const setCookies = (
     }
   );
 
-  // ----------------------------------------------------------
-  // REFRESH TOKEN
-  // ----------------------------------------------------------
-
+  /*
+   * Refresh Token
+   */
   res.cookie(
     "refreshToken",
     refreshToken,
@@ -121,381 +120,438 @@ const setCookies = (
       ...cookieOptions,
 
       // 7 days
-      maxAge:
-        7 * 24 * 60 * 60 * 1000,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     }
   );
 };
 
-// ============================================================
-// AUTH CONTROLLER
-// ============================================================
+/*
+|--------------------------------------------------------------------------
+| Auth Controller
+|--------------------------------------------------------------------------
+*/
 
 export const authController = {
+  /*
+  |--------------------------------------------------------------------------
+  | SIGN UP
+  |--------------------------------------------------------------------------
+  */
 
-  // ==========================================================
-  // SIGN UP
-  // ==========================================================
+  signUp: catchAsync(async (req, res) => {
+    const user =
+      await authService.signUp(
+        req.body,
+        req.ip,
+        req.headers["user-agent"]
+      );
 
-  signUp: catchAsync(
-    async (req, res) => {
-      const user =
-        await authService.signUp(
-          req.body,
-          req.ip,
-          req.headers["user-agent"]
-        );
+    return res.status(201).json({
+      status: "success",
 
-      return res.status(201).json({
-        status: "success",
-        message:
-          "OTP sent to your email",
-        data: {
-          email: user.email,
-        },
-      });
+      message:
+        "OTP sent to your email",
+
+      data: {
+        email: user.email,
+      },
+    });
+  }),
+
+  /*
+  |--------------------------------------------------------------------------
+  | VERIFY OTP
+  |--------------------------------------------------------------------------
+  */
+
+  verifyMfaOtp: catchAsync(async (req, res) => {
+    const {
+      email,
+      otp,
+    } = req.body;
+
+    if (!email || !otp) {
+      throw new AppError(
+        "Email and OTP are required",
+        400
+      );
     }
-  ),
 
-  // ==========================================================
-  // VERIFY MFA / EMAIL OTP
-  // ==========================================================
-
-  verifyMfaOtp: catchAsync(
-    async (req, res) => {
-      const {
+    const result =
+      await authService.verifyEmailOtp(
         email,
-        otp,
-      } = req.body;
+        otp
+      );
 
-      if (!email || !otp) {
-        throw new AppError(
-          "Email and OTP are required",
-          400
-        );
-      }
+    /*
+     * Set authentication cookies
+     */
+    setCookies(
+      res,
+      result.accessToken,
+      result.refreshToken
+    );
+
+    return res.status(200).json({
+      status: "success",
+
+      message:
+        "Email verified successfully",
+
+      data: {
+        user: result.user,
+      },
+
+      /*
+       * Kept for compatibility with
+       * your existing frontend.
+       *
+       * The actual authentication is
+       * handled by the httpOnly cookie.
+       */
+      token: result.accessToken,
+    });
+  }),
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOGIN
+  |--------------------------------------------------------------------------
+  */
+
+  login: catchAsync(async (req, res) => {
+    const result =
+      await authService.login(
+        req.body,
+        req.ip,
+        req.headers["user-agent"]
+      );
+
+    /*
+     * Set authentication cookies
+     */
+    setCookies(
+      res,
+      result.accessToken,
+      result.refreshToken
+    );
+
+    return res.status(200).json({
+      status: "success",
+
+      /*
+       * Kept for compatibility.
+       *
+       * Do NOT put this token into the
+       * Google OAuth URL.
+       */
+      token: result.accessToken,
+
+      data: {
+        user: result.user,
+      },
+    });
+  }),
+
+  /*
+  |--------------------------------------------------------------------------
+  | REFRESH TOKEN
+  |--------------------------------------------------------------------------
+  */
+
+  refreshToken: catchAsync(async (req, res) => {
+    /*
+     * Prefer refresh token from
+     * httpOnly cookie.
+     *
+     * Body fallback is kept for
+     * compatibility with existing code.
+     */
+    const token =
+      req.cookies?.refreshToken ||
+      req.body?.refreshToken;
+
+    if (!token) {
+      throw new AppError(
+        "Refresh token missing",
+        401
+      );
+    }
+
+    const result =
+      await authService.refreshTokens(
+        token
+      );
+
+    /*
+     * Replace old cookies with
+     * newly generated tokens.
+     */
+    setCookies(
+      res,
+      result.accessToken,
+      result.refreshToken
+    );
+
+    return res.status(200).json({
+      status: "success",
+
+      token: result.accessToken,
+    });
+  }),
+
+  /*
+  |--------------------------------------------------------------------------
+  | LOGOUT
+  |--------------------------------------------------------------------------
+  */
+
+  logout: catchAsync(async (req, res) => {
+    if (req.user?._id) {
+      await authService.logout(
+        req.user._id,
+        req.ip,
+        req.headers["user-agent"]
+      );
+    }
+
+    const cookieOptions =
+      getCookieOptions();
+
+    console.log(
+      "🍪 Clearing authentication cookies"
+    );
+
+    /*
+     * Clear access token
+     */
+    res.clearCookie(
+      "accessToken",
+      cookieOptions
+    );
+
+    /*
+     * Clear refresh token
+     */
+    res.clearCookie(
+      "refreshToken",
+      cookieOptions
+    );
+
+    return res.status(200).json({
+      status: "success",
+
+      message:
+        "Logged out successfully",
+    });
+  }),
+
+  /*
+  |--------------------------------------------------------------------------
+  | REQUEST PASSWORD RESET
+  |--------------------------------------------------------------------------
+  */
+
+  requestPasswordReset: catchAsync(
+    async (req, res) => {
+      const reqHost =
+        `${req.protocol}://${req.get("host")}`;
 
       const result =
-        await authService.verifyEmailOtp(
-          email,
-          otp
+        await authService.requestPasswordReset(
+          req.body.email,
+          reqHost,
+          req.ip,
+          req.headers["user-agent"]
         );
-
-      setCookies(
-        res,
-        result.accessToken,
-        result.refreshToken
-      );
 
       return res.status(200).json({
         status: "success",
+
         message:
-          "Email verified successfully",
-        data: {
-          user: result.user,
-        },
-        token:
-          result.accessToken,
+          result.message,
       });
     }
   ),
 
-  // ==========================================================
-  // LOGIN
-  // ==========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | RESET PASSWORD
+  |--------------------------------------------------------------------------
+  */
 
-  login: catchAsync(
+  resetPassword: catchAsync(
     async (req, res) => {
       const result =
-        await authService.login(
-          req.body,
+        await authService.resetPassword(
+          req.params.token,
+          req.body.password,
           req.ip,
           req.headers["user-agent"]
         );
 
-      setCookies(
-        res,
-        result.accessToken,
-        result.refreshToken
-      );
-
       return res.status(200).json({
         status: "success",
-        token:
-          result.accessToken,
-        data: {
-          user: result.user,
-        },
+
+        message:
+          result.message,
       });
     }
   ),
 
-  // ==========================================================
-  // REFRESH TOKEN
-  // ==========================================================
+  /*
+  |--------------------------------------------------------------------------
+  | GOOGLE OAUTH SUCCESS
+  |--------------------------------------------------------------------------
+  */
 
-  refreshToken: catchAsync(
+  oauthSuccess: catchAsync(
     async (req, res) => {
-      const token =
-        req.cookies?.refreshToken ||
-        req.body?.refreshToken;
-
-      if (!token) {
-        throw new AppError(
-          "Refresh token missing",
-          401
-        );
-      }
-
-      const result =
-        await authService.refreshTokens(
-          token
-        );
-
-      setCookies(
-        res,
-        result.accessToken,
-        result.refreshToken
+      console.log(
+        "=================================================="
       );
-
-      return res.status(200).json({
-        status: "success",
-        token:
-          result.accessToken,
-      });
-    }
-  ),
-
-  // ==========================================================
-  // LOGOUT
-  // ==========================================================
-
-  logout: catchAsync(
-    async (req, res) => {
-
-      if (req.user?._id) {
-        await authService.logout(
-          req.user._id,
-          req.ip,
-          req.headers["user-agent"]
-        );
-      }
-
-      const cookieOptions =
-        getCookieOptions();
 
       console.log(
-        "🍪 Clearing authentication cookies"
+        "🟢 GOOGLE OAUTH SUCCESS HANDLER"
       );
 
-      res.clearCookie(
-        "accessToken",
-        cookieOptions
-      );
-
-      res.clearCookie(
-        "refreshToken",
-        cookieOptions
-      );
-
-      return res.status(200).json({
-        status: "success",
-        message:
-          "Logged out successfully",
-      });
-    }
-  ),
-
-  // ==========================================================
-  // FORGOT PASSWORD
-  // ==========================================================
-
-  requestPasswordReset:
-    catchAsync(
-      async (req, res) => {
-
-        const reqHost =
-          `${req.protocol}://${req.get("host")}`;
-
-        const result =
-          await authService.requestPasswordReset(
-            req.body.email,
-            reqHost,
-            req.ip,
-            req.headers["user-agent"]
-          );
-
-        return res.status(200).json({
-          status: "success",
-          message: result.message,
-        });
-      }
-    ),
-
-  // ==========================================================
-  // RESET PASSWORD
-  // ==========================================================
-
-  resetPassword:
-    catchAsync(
-      async (req, res) => {
-
-        const result =
-          await authService.resetPassword(
-            req.params.token,
-            req.body.password,
-            req.ip,
-            req.headers["user-agent"]
-          );
-
-        return res.status(200).json({
-          status: "success",
-          message: result.message,
-        });
-      }
-    ),
-
-  // ==========================================================
-  // GOOGLE OAUTH SUCCESS
-  // ==========================================================
-
-  oauthSuccess:
-    catchAsync(
-      async (req, res) => {
-
+      /*
+       * Passport should have attached
+       * the authenticated user to req.user.
+       */
+      if (!req.user) {
         console.log(
-          "=================================================="
-        );
-
-        console.log(
-          "🟢 GOOGLE OAUTH SUCCESS HANDLER"
-        );
-
-        // ----------------------------------------------------
-        // CHECK USER
-        // ----------------------------------------------------
-
-        if (!req.user) {
-          console.log(
-            "❌ req.user is missing"
-          );
-
-          return res.redirect(
-            `${process.env.FRONTEND_URL}/login?error=oauth_failed`
-          );
-        }
-
-        const user =
-          req.user;
-
-        console.log(
-          "Authenticated user:",
-          user.email
-        );
-
-        console.log(
-          "User ID:",
-          user._id.toString()
-        );
-
-        console.log(
-          "User role:",
-          user.role
-        );
-
-        // ----------------------------------------------------
-        // CHECK USER EMAIL
-        // ----------------------------------------------------
-
-        if (
-          !user.email
-        ) {
-          console.log(
-            "❌ User email is missing"
-          );
-
-          return res.redirect(
-            `${process.env.FRONTEND_URL}/login?error=user_not_found`
-          );
-        }
-
-        // ----------------------------------------------------
-        // CREATE ACCESS TOKEN
-        // ----------------------------------------------------
-
-        const accessToken =
-          jwt.sign(
-            {
-              id: user._id,
-              role: user.role,
-            },
-            process.env.JWT_ACCESS_SECRET,
-            {
-              expiresIn: "15m",
-            }
-          );
-
-        // ----------------------------------------------------
-        // CREATE REFRESH TOKEN
-        // ----------------------------------------------------
-
-        const refreshToken =
-          jwt.sign(
-            {
-              id: user._id,
-              role: user.role,
-            },
-            process.env.JWT_REFRESH_SECRET,
-            {
-              expiresIn: "7d",
-            }
-          );
-
-        console.log(
-          "✅ Access token created"
-        );
-
-        console.log(
-          "✅ Refresh token created"
-        );
-
-        // ----------------------------------------------------
-        // SET HTTP-ONLY COOKIES
-        // ----------------------------------------------------
-
-        setCookies(
-          res,
-          accessToken,
-          refreshToken
-        );
-
-        console.log(
-          "✅ Authentication cookies added to response"
-        );
-
-        // ----------------------------------------------------
-        // REDIRECT TO FRONTEND
-        // ----------------------------------------------------
-
-        const redirectUrl =
-          `${process.env.FRONTEND_URL}/oauth-callback?role=${encodeURIComponent(
-            user.role
-          )}`;
-
-        console.log(
-          "➡️ Redirecting to:",
-          redirectUrl
-        );
-
-        console.log(
-          "=================================================="
+          "❌ req.user is missing"
         );
 
         return res.redirect(
-          redirectUrl
+          `${process.env.FRONTEND_URL}/login?error=oauth_failed`
         );
       }
-    ),
+
+      const user = req.user;
+
+      console.log(
+        "Authenticated user:",
+        user.email
+      );
+
+      console.log(
+        "User ID:",
+        user._id.toString()
+      );
+
+      console.log(
+        "User role:",
+        user.role
+      );
+
+      /*
+       * Make sure the authenticated
+       * user has an email.
+       */
+      if (!user.email) {
+        console.log(
+          "❌ User email is missing"
+        );
+
+        return res.redirect(
+          `${process.env.FRONTEND_URL}/login?error=user_not_found`
+        );
+      }
+
+      /*
+       * Create Access Token
+       */
+      const accessToken =
+        jwt.sign(
+          {
+            id: user._id,
+            role: user.role,
+          },
+
+          process.env.JWT_ACCESS_SECRET,
+
+          {
+            expiresIn: "15m",
+          }
+        );
+
+      /*
+       * Create Refresh Token
+       */
+      const refreshToken =
+        jwt.sign(
+          {
+            id: user._id,
+            role: user.role,
+          },
+
+          process.env.JWT_REFRESH_SECRET,
+
+          {
+            expiresIn: "7d",
+          }
+        );
+
+      console.log(
+        "✅ Access token created"
+      );
+
+      console.log(
+        "✅ Refresh token created"
+      );
+
+      /*
+       * IMPORTANT:
+       *
+       * Tokens are stored in httpOnly
+       * cookies.
+       *
+       * They are NOT placed in the
+       * frontend URL.
+       */
+      setCookies(
+        res,
+        accessToken,
+        refreshToken
+      );
+
+      console.log(
+        "✅ Authentication cookies added to response"
+      );
+
+      /*
+       * Redirect to frontend.
+       *
+       * Only the role is included.
+       * NO JWT is included in the URL.
+       */
+      const frontendUrl =
+        (
+          process.env.FRONTEND_URL ||
+          "http://localhost:3000"
+        ).replace(/\/+$/, "");
+
+      const redirectUrl =
+        `${frontendUrl}/oauth-callback?role=${encodeURIComponent(
+          user.role
+        )}`;
+
+      console.log(
+        "➡️ Redirecting to:",
+        redirectUrl
+      );
+
+      console.log(
+        "=================================================="
+      );
+
+      return res.redirect(
+        redirectUrl
+      );
+    }
+  ),
 };
 
 export default authController;
