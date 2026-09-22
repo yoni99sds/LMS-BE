@@ -15,6 +15,7 @@ import AppError from './utils/AppError.js';
 const app = express();
 
 // ================= SECURITY =================
+
 app.use(helmet());
 
 // ================= CORS =================
@@ -25,18 +26,28 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://172.17.64.1:3000',
+
+  // Production frontend
+  'https://lms-jet-zeta.vercel.app',
+
+  // Render environment variable
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
+// Remove duplicates
+const uniqueAllowedOrigins = [
+  ...new Set(allowedOrigins),
+];
+
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests without an origin
-    // such as Postman/server-to-server requests
+    // Requests without an Origin header
+    // such as Postman or server-to-server requests
     if (!origin) {
       return callback(null, true);
     }
 
-    if (allowedOrigins.includes(origin)) {
+    if (uniqueAllowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
@@ -50,7 +61,6 @@ const corsOptions = {
     );
   },
 
-  // Required for cookies
   credentials: true,
 
   methods: [
