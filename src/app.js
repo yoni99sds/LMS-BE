@@ -14,13 +14,27 @@ import AppError from './utils/AppError.js';
 
 const app = express();
 
-// ================= SECURITY =================
+// ============================================================
+// TRUST PROXY
+// ============================================================
+// Render runs behind a reverse proxy.
+// This allows Express and express-rate-limit to correctly
+// identify the original client IP from X-Forwarded-For.
+
+app.set('trust proxy', 1);
+
+// ============================================================
+// SECURITY
+// ============================================================
 
 app.use(helmet());
 
-// ================= CORS =================
+// ============================================================
+// CORS
+// ============================================================
 
 const allowedOrigins = [
+  // Local development
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:5173',
@@ -30,19 +44,20 @@ const allowedOrigins = [
   // Production frontend
   'https://lms-jet-zeta.vercel.app',
 
-  // Render environment variable
+  // Production frontend from environment variable
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
-// Remove duplicates
+// Remove duplicate origins
 const uniqueAllowedOrigins = [
   ...new Set(allowedOrigins),
 ];
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Requests without an Origin header
-    // such as Postman or server-to-server requests
+    // Allow requests without an Origin header.
+    // This includes server-to-server requests,
+    // health checks, Postman, etc.
     if (!origin) {
       return callback(null, true);
     }
@@ -61,6 +76,7 @@ const corsOptions = {
     );
   },
 
+  // Required for httpOnly authentication cookies
   credentials: true,
 
   methods: [
@@ -82,12 +98,15 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+// Handle preflight requests
 app.options(
   '*',
   cors(corsOptions)
 );
 
-// ================= BODY PARSING =================
+// ============================================================
+// BODY PARSING
+// ============================================================
 
 app.use(
   express.json({
@@ -102,21 +121,32 @@ app.use(
   })
 );
 
-// ================= COOKIES =================
+// ============================================================
+// COOKIE PARSER
+// ============================================================
+// Required to read:
+// req.cookies.accessToken
+// req.cookies.refreshToken
 
 app.use(cookieParser());
 
-// ================= API RATE LIMIT =================
+// ============================================================
+// API RATE LIMITER
+// ============================================================
 
 app.use('/api', apiLimiter);
 
-// ================= PASSPORT =================
+// ============================================================
+// PASSPORT
+// ============================================================
 
 configurePassport();
 
 app.use(passport.initialize());
 
-// ================= STATIC FILES =================
+// ============================================================
+// STATIC FILES
+// ============================================================
 
 const __dirname = path.resolve();
 
@@ -127,15 +157,21 @@ app.use(
   )
 );
 
-// ================= SWAGGER =================
+// ============================================================
+// SWAGGER
+// ============================================================
 
 setupSwagger(app);
 
-// ================= API ROUTES =================
+// ============================================================
+// API ROUTES
+// ============================================================
 
 app.use('/api', routes);
 
-// ================= ROOT =================
+// ============================================================
+// ROOT ROUTE
+// ============================================================
 
 app.get('/', (req, res) => {
   res.status(200).json({
@@ -145,7 +181,9 @@ app.get('/', (req, res) => {
   });
 });
 
-// ================= 404 =================
+// ============================================================
+// 404 HANDLER
+// ============================================================
 
 app.all('*', (req, res, next) => {
   next(
@@ -156,9 +194,15 @@ app.all('*', (req, res, next) => {
   );
 });
 
-// ================= GLOBAL ERROR HANDLER =================
+// ============================================================
+// GLOBAL ERROR HANDLER
+// ============================================================
 
 app.use(globalErrorHandler);
+
+// ============================================================
+// EXPORT
+// ============================================================
 
 export default app;
 export { app };
