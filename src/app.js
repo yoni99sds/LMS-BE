@@ -14,26 +14,24 @@ import AppError from './utils/AppError.js';
 
 const app = express();
 
-// ===============================
-// 1) SECURITY HEADERS
-// ===============================
+// ================= SECURITY =================
 app.use(helmet());
 
-// ===============================
-// 2) CORS FIX (IMPORTANT)
-// ===============================
+// ================= CORS =================
 
 const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
-  'http://172.17.64.1:3000'
-];
+  'http://172.17.64.1:3000',
+  process.env.FRONTEND_URL,
+].filter(Boolean);
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow server-to-server requests or mobile apps
+    // Allow requests without an origin
+    // such as Postman/server-to-server requests
     if (!origin) {
       return callback(null, true);
     }
@@ -42,13 +40,17 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    console.log('❌ CORS blocked origin:', origin);
+    console.log(
+      '❌ CORS blocked origin:',
+      origin
+    );
 
     return callback(
       new Error(`CORS blocked: ${origin}`)
     );
   },
 
+  // Required for cookies
   credentials: true,
 
   methods: [
@@ -57,58 +59,54 @@ const corsOptions = {
     'PUT',
     'DELETE',
     'PATCH',
-    'OPTIONS'
+    'OPTIONS',
   ],
 
   allowedHeaders: [
     'Content-Type',
-    'Authorization'
+    'Authorization',
   ],
 
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
 };
 
 app.use(cors(corsOptions));
 
-// IMPORTANT: Handle preflight requests explicitly
-app.options('*', cors(corsOptions));
+app.options(
+  '*',
+  cors(corsOptions)
+);
 
-// ===============================
-// 3) BODY + COOKIE PARSER
-// ===============================
+// ================= BODY PARSING =================
 
 app.use(
   express.json({
-    limit: '10mb'
+    limit: '10mb',
   })
 );
 
 app.use(
   express.urlencoded({
     extended: true,
-    limit: '10mb'
+    limit: '10mb',
   })
 );
 
+// ================= COOKIES =================
+
 app.use(cookieParser());
 
-// ===============================
-// 4) RATE LIMITING
-// ===============================
+// ================= API RATE LIMIT =================
 
 app.use('/api', apiLimiter);
 
-// ===============================
-// 5) PASSPORT SETUP
-// ===============================
+// ================= PASSPORT =================
 
 configurePassport();
 
 app.use(passport.initialize());
 
-// ===============================
-// 6) STATIC FILES
-// ===============================
+// ================= STATIC FILES =================
 
 const __dirname = path.resolve();
 
@@ -119,33 +117,25 @@ app.use(
   )
 );
 
-// ===============================
-// 7) SWAGGER DOCS
-// ===============================
+// ================= SWAGGER =================
 
 setupSwagger(app);
 
-// ===============================
-// 8) ROUTES
-// ===============================
+// ================= API ROUTES =================
 
 app.use('/api', routes);
 
-// ===============================
-// 9) HEALTH CHECK
-// ===============================
+// ================= ROOT =================
 
 app.get('/', (req, res) => {
   res.status(200).json({
     status: 'success',
     message: 'LMS API is running',
-    docs: '/api-docs'
+    docs: '/api-docs',
   });
 });
 
-// ===============================
-// 10) 404 HANDLER
-// ===============================
+// ================= 404 =================
 
 app.all('*', (req, res, next) => {
   next(
@@ -156,25 +146,9 @@ app.all('*', (req, res, next) => {
   );
 });
 
-// ===============================
-// 11) GLOBAL ERROR HANDLER
-// ===============================
+// ================= GLOBAL ERROR HANDLER =================
 
 app.use(globalErrorHandler);
-
-// ===============================
-// 12) SEED INSTRUCTOR
-// ===============================
-//
-// The seed function checks whether the instructor
-// already exists before creating one.
-//
-// IMPORTANT:
-// This assumes MongoDB has already been connected
-// before app.js is initialized.
-//
-
-
 
 export default app;
 export { app };

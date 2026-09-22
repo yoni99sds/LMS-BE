@@ -7,17 +7,19 @@ import AppError from '../utils/AppError.js';
 const setCookies = (res, accessToken, refreshToken) => {
   const isProd = process.env.NODE_ENV === 'production';
 
-  res.cookie('accessToken', accessToken, {
+  const cookieOptions = {
     httpOnly: true,
     secure: isProd,
-    sameSite: 'strict',
+    sameSite: isProd ? 'none' : 'lax',
+  };
+
+  res.cookie('accessToken', accessToken, {
+    ...cookieOptions,
     maxAge: 15 * 60 * 1000,
   });
 
   res.cookie('refreshToken', refreshToken, {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: 'strict',
+    ...cookieOptions,
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 };
@@ -25,7 +27,7 @@ const setCookies = (res, accessToken, refreshToken) => {
 // ================= CONTROLLER =================
 export const authController = {
 
-  // SIGNUP
+  // ================= SIGNUP =================
   signUp: catchAsync(async (req, res) => {
     const user = await authService.signUp(
       req.body,
@@ -42,7 +44,7 @@ export const authController = {
     });
   }),
 
-  // VERIFY OTP (FIXED + SAFE)
+  // ================= VERIFY OTP =================
   verifyMfaOtp: catchAsync(async (req, res) => {
     const { email, otp } = req.body;
 
@@ -52,7 +54,11 @@ export const authController = {
 
     const result = await authService.verifyEmailOtp(email, otp);
 
-    setCookies(res, result.accessToken, result.refreshToken);
+    setCookies(
+      res,
+      result.accessToken,
+      result.refreshToken
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -64,7 +70,7 @@ export const authController = {
     });
   }),
 
-  // LOGIN
+  // ================= LOGIN =================
   login: catchAsync(async (req, res) => {
     const result = await authService.login(
       req.body,
@@ -72,7 +78,11 @@ export const authController = {
       req.headers['user-agent']
     );
 
-    setCookies(res, result.accessToken, result.refreshToken);
+    setCookies(
+      res,
+      result.accessToken,
+      result.refreshToken
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -83,17 +93,27 @@ export const authController = {
     });
   }),
 
-  // REFRESH TOKEN
+  // ================= REFRESH TOKEN =================
   refreshToken: catchAsync(async (req, res) => {
-    const token = req.cookies?.refreshToken || req.body.refreshToken;
+    const token =
+      req.cookies?.refreshToken ||
+      req.body.refreshToken;
 
     if (!token) {
-      throw new AppError('Refresh token missing', 401);
+      throw new AppError(
+        'Refresh token missing',
+        401
+      );
     }
 
-    const result = await authService.refreshTokens(token);
+    const result =
+      await authService.refreshTokens(token);
 
-    setCookies(res, result.accessToken, result.refreshToken);
+    setCookies(
+      res,
+      result.accessToken,
+      result.refreshToken
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -101,7 +121,7 @@ export const authController = {
     });
   }),
 
-  // LOGOUT
+  // ================= LOGOUT =================
   logout: catchAsync(async (req, res) => {
     if (req.user?._id) {
       await authService.logout(
@@ -111,8 +131,24 @@ export const authController = {
       );
     }
 
-    res.clearCookie('accessToken');
-    res.clearCookie('refreshToken');
+    const isProd =
+      process.env.NODE_ENV === 'production';
+
+    const clearCookieOptions = {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
+    };
+
+    res.clearCookie(
+      'accessToken',
+      clearCookieOptions
+    );
+
+    res.clearCookie(
+      'refreshToken',
+      clearCookieOptions
+    );
 
     return res.status(200).json({
       status: 'success',
@@ -120,16 +156,18 @@ export const authController = {
     });
   }),
 
-  // PASSWORD RESET REQUEST
+  // ================= PASSWORD RESET REQUEST =================
   requestPasswordReset: catchAsync(async (req, res) => {
-    const reqHost = `${req.protocol}://${req.get('host')}`;
+    const reqHost =
+      `${req.protocol}://${req.get('host')}`;
 
-    const result = await authService.requestPasswordReset(
-      req.body.email,
-      reqHost,
-      req.ip,
-      req.headers['user-agent']
-    );
+    const result =
+      await authService.requestPasswordReset(
+        req.body.email,
+        reqHost,
+        req.ip,
+        req.headers['user-agent']
+      );
 
     return res.status(200).json({
       status: 'success',
@@ -137,14 +175,15 @@ export const authController = {
     });
   }),
 
-  // RESET PASSWORD
+  // ================= RESET PASSWORD =================
   resetPassword: catchAsync(async (req, res) => {
-    const result = await authService.resetPassword(
-      req.params.token,
-      req.body.password,
-      req.ip,
-      req.headers['user-agent']
-    );
+    const result =
+      await authService.resetPassword(
+        req.params.token,
+        req.body.password,
+        req.ip,
+        req.headers['user-agent']
+      );
 
     return res.status(200).json({
       status: 'success',
@@ -152,38 +191,63 @@ export const authController = {
     });
   }),
 
-  // OAUTH SUCCESS
-oauthSuccess: catchAsync(async (req, res) => {
-  if (!req.user) {
-    return res.redirect(`${process.env.FRONTEND_URL}/login?error=oauth_failed`);
-  }
+  // ================= GOOGLE OAUTH SUCCESS =================
+  oauthSuccess: catchAsync(async (req, res) => {
+    // Passport failed to authenticate
+    if (!req.user) {
+      return res.redirect(
+        `${process.env.FRONTEND_URL}/login?error=oauth_failed`
+      );
+    }
 
-  const user = req.user;
+    const user = req.user;
 
-  // ❌ IMPORTANT: block unregistered users
-  if (!user || !user.email) {
-    return res.redirect(`${process.env.FRONTEND_URL}/login?error=user_not_found`);
-  }
+    // Safety check
+    if (!user || !user.email) {
+      return res.redirect(
+        `${process.env.FRONTEND_URL}/login?error=user_not_found`
+      );
+    }
 
-  const accessToken = jwt.sign(
-    { id: user._id, role: user.role },
-    process.env.JWT_ACCESS_SECRET,
-    { expiresIn: "15m" }
-  );
+    // Generate access token
+    const accessToken = jwt.sign(
+      {
+        id: user._id,
+        role: user.role,
+      },
+      process.env.JWT_ACCESS_SECRET,
+      {
+        expiresIn: '15m',
+      }
+    );
 
-  const refreshToken = jwt.sign(
-    { id: user._id, role: user.role },
-    process.env.JWT_REFRESH_SECRET,
-    { expiresIn: "7d" }
-  );
+    // Generate refresh token
+    const refreshToken = jwt.sign(
+      {
+        id: user._id,
+        role: user.role,
+      },
+      process.env.JWT_REFRESH_SECRET,
+      {
+        expiresIn: '7d',
+      }
+    );
 
-  setCookies(res, accessToken, refreshToken);
+    // Store tokens in secure httpOnly cookies.
+    // The JWT is NOT exposed in the URL.
+    setCookies(
+      res,
+      accessToken,
+      refreshToken
+    );
 
-  // 🔥 SEND ROLE TO FRONTEND
-  return res.redirect(
-    `${process.env.FRONTEND_URL}/oauth-callback?token=${accessToken}&role=${user.role}`
-  );
-})
+    // Only send the role to the frontend.
+    return res.redirect(
+      `${process.env.FRONTEND_URL}/oauth-callback?role=${encodeURIComponent(
+        user.role
+      )}`
+    );
+  }),
 };
 
 export default authController;
